@@ -58,8 +58,3 @@ func (s *Server) Delete(ctx context.Context, req *pbresource.DeleteRequest) (*pb
 	// TODO
 	return &pbresource.DeleteResponse{}, nil
 }
-
-func (s *Server) Watch(req *pbresource.WatchRequest, ws pbresource.ResourceService_WatchServer) error {
-	// TODO
-	return nil
-}
