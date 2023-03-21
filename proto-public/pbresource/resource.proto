@@ -148,7 +148,7 @@ message WatchListRequest {
   Type type = 1;
   Tenancy tenancy = 2;
   string name_prefix = 3;
- }
+}
 
 message WatchListResponse {
   enum Operation {

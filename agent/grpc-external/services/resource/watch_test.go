@@ -3,7 +3,6 @@ package resource
 import (
 	context "context"
 	"errors"
-	"fmt"
 	"io"
 	"testing"
 	"time"
@@ -23,16 +22,8 @@ func TestWatchList_TypeNotFound(t *testing.T) {
 	client := testClient(t, server)
 
 	stream, err := client.WatchList(context.Background(), &pbresource.WatchListRequest{
-		Type: &pbresource.Type{
-			Group:        "mesh",
-			GroupVersion: "v1",
-			Kind:         "service",
-		},
-		Tenancy: &pbresource.Tenancy{
-			Partition: "default",
-			Namespace: "default",
-			PeerName:  "",
-		},
+		Type:       typev1,
+		Tenancy:    tenancy,
 		NamePrefix: "",
 	})
 	require.NoError(t, err)
@@ -43,115 +34,99 @@ func TestWatchList_TypeNotFound(t *testing.T) {
 	require.Contains(t, err.Error(), "resource type mesh/v1/service not registered")
 }
 
-func TestWatchList_Upsert(t *testing.T) {
-	t1 := &pbresource.Type{Group: "mesh", GroupVersion: "v1", Kind: "service"}
-	ten1 := &pbresource.Tenancy{
-		Partition: "default",
-		Namespace: "default",
-		PeerName:  "local",
-	}
+func TestWatchList_GroupVersionMatches(t *testing.T) {
+	ctx := testContext(t)
 	registry := resource.NewRegistry()
-	registry.Register(resource.Registration{Type: t1})
-
+	registry.Register(resource.Registration{Type: typev1})
 	backend, err := inmem.NewBackend()
-	go backend.Run(testContext(t))
-
 	require.NoError(t, err)
+	go backend.Run(ctx)
 	server := NewServer(Config{registry: registry, backend: backend})
 	client := testClient(t, server)
 
-	ctx := context.Background()
-
-	// create resource r1 with is of type t1
-	r1 := &pbresource.Resource{
-		Id: &pbresource.ID{
-			Uid:     "someUid",
-			Name:    "someName",
-			Type:    t1,
-			Tenancy: ten1,
-		},
-		Version: "1",
-	}
-	r1, err = backend.WriteCAS(ctx, r1, "")
-	require.NoError(t, err)
-
-	// watch t1
+	// create a watch
 	stream, err := client.WatchList(ctx, &pbresource.WatchListRequest{
-		Type:       t1,
-		Tenancy:    ten1,
+		Type:       typev1,
+		Tenancy:    tenancy,
 		NamePrefix: "",
 	})
 	require.NoError(t, err)
-
-	// verify upsert event received for creation
 	rspCh := handleResourceStream(t, stream)
+
+	// insert and verify upsert event received
+	r1, err := backend.WriteCAS(ctx, resourcev1, "")
+	require.NoError(t, err)
 	rsp := mustGetResource(t, rspCh)
 	require.Equal(t, pbresource.WatchListResponse_OPERATION_UPSERT, rsp.Operation)
 	prototest.AssertDeepEqual(t, r1, rsp.Resource)
 
-	// rsp2 := mustGetResource(t, rspCh)
-	// fmt.Println(rsp2)
+	// update and verify upsert event received
+	r2 := clone(r1)
+	r2.Version = "2"
+	r2, err = backend.WriteCAS(ctx, r2, r1.Version)
+	require.NoError(t, err)
+	rsp = mustGetResource(t, rspCh)
+	require.Equal(t, pbresource.WatchListResponse_OPERATION_UPSERT, rsp.Operation)
+	prototest.AssertDeepEqual(t, r2, rsp.Resource)
 
-	//mutate and write and v2
+	// delete and verify delete event received
+	err = backend.DeleteCAS(ctx, r2.Id, r2.Version)
+	require.NoError(t, err)
+	rsp = mustGetResource(t, rspCh)
+	require.Equal(t, pbresource.WatchListResponse_OPERATION_DELETE, rsp.Operation)
+}
+
+func TestWatchList_GroupVersionMismatch(t *testing.T) {
+	// Given a watch on typev2 that only differs from typev1 by GroupVersion
+	// When a resource of typev1 is created/updated/deleted
+	// Then no watch events should be emitted
+	registry := resource.NewRegistry()
+	registry.Register(resource.Registration{Type: typev1})
+	registry.Register(resource.Registration{Type: typev2})
+	backend, err := inmem.NewBackend()
+	require.NoError(t, err)
+	ctx := testContext(t)
+	go backend.Run(ctx)
+	server := NewServer(Config{registry: registry, backend: backend})
+	client := testClient(t, server)
+
+	// create a watch for typev2
+	stream, err := client.WatchList(ctx, &pbresource.WatchListRequest{
+		Type:       typev2,
+		Tenancy:    tenancy,
+		NamePrefix: "",
+	})
+	require.NoError(t, err)
+	rspCh := handleResourceStream(t, stream)
+
+	// insert
+	r1, err := backend.WriteCAS(ctx, resourcev1, "")
+	require.NoError(t, err)
+
+	// update
 	r2 := clone(r1)
 	r2.Version = "2"
 	r2, err = backend.WriteCAS(ctx, r2, r1.Version)
 	require.NoError(t, err)
 
-	// verify upsert event received for update
-	rsp = mustGetResource(t, rspCh)
-	// rsp2 := mustGetResource(t, rspCh)
-	// fmt.Println(rsp2)
-	require.Equal(t, pbresource.WatchListResponse_OPERATION_UPSERT, rsp.Operation)
-	prototest.AssertDeepEqual(t, r2, rsp.Resource)
+	// delete
+	err = backend.DeleteCAS(ctx, r2.Id, r2.Version)
+	require.NoError(t, err)
 
+	// verify no events received
+	mustGetNoResource(t, rspCh)
 }
 
-func TestWatchList_Loop(t *testing.T) {
-	t1 := &pbresource.Type{Group: "mesh", GroupVersion: "v1", Kind: "service"}
-	ten1 := &pbresource.Tenancy{
-		Partition: "default",
-		Namespace: "default",
-		PeerName:  "local",
-	}
-	registry := resource.NewRegistry()
-	registry.Register(resource.Registration{Type: t1})
-	backend, err := inmem.NewBackend()
-	require.NoError(t, err)
-	server := NewServer(Config{registry: registry, backend: backend})
-	client := testClient(t, server)
+func mustGetNoResource(t *testing.T, ch <-chan resourceOrError) {
+	t.Helper()
 
-	ctx := context.Background()
-
-	// watch t1
-	stream, err := client.WatchList(ctx, &pbresource.WatchListRequest{
-		Type:       t1,
-		Tenancy:    ten1,
-		NamePrefix: "",
-	})
-	require.NoError(t, err)
-
-	for i := 0; i < 10; i++ {
-		r := &pbresource.Resource{
-			Id: &pbresource.ID{
-				Uid:     fmt.Sprintf("someUid %d", i),
-				Name:    fmt.Sprintf("someName %d", i),
-				Type:    t1,
-				Tenancy: ten1,
-			},
-			Version: "1",
-		}
-		r, err = backend.WriteCAS(ctx, r, "")
-		require.NoError(t, err)
-	}
-
-	// verify upsert event received for creation
-	rspCh := handleResourceStream(t, stream)
-
-	for i := 0; i < 10; i++ {
-		rsp := mustGetResource(t, rspCh)
-		require.Equal(t, pbresource.WatchListResponse_OPERATION_UPSERT, rsp.Operation)
-		//prototest.AssertDeepEqual(t, r1, rsp.Resource)
+	select {
+	case rsp := <-ch:
+		require.NoError(t, rsp.err)
+		require.Nil(t, rsp.rsp, "expected nil response with no error")
+	case <-time.After(1 * time.Second):
+		// Dan: Any way to do this without the annoying delay?
+		return
 	}
 }
 
@@ -201,6 +176,33 @@ func handleResourceStream(t *testing.T, stream pbresource.ResourceService_WatchL
 	}()
 	return rspCh
 }
+
+var (
+	tenancy = &pbresource.Tenancy{
+		Partition: "default",
+		Namespace: "default",
+		PeerName:  "local",
+	}
+	typev1 = &pbresource.Type{
+		Group:        "mesh",
+		GroupVersion: "v1",
+		Kind:         "service",
+	}
+	typev2 = &pbresource.Type{
+		Group:        "mesh",
+		GroupVersion: "v2",
+		Kind:         "service",
+	}
+	resourcev1 = &pbresource.Resource{
+		Id: &pbresource.ID{
+			Uid:     "someUid",
+			Name:    "someName",
+			Type:    typev1,
+			Tenancy: tenancy,
+		},
+		Version: "1",
+	}
+)
 
 type resourceOrError struct {
 	rsp *pbresource.WatchListResponse
