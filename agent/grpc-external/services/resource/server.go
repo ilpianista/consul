@@ -50,11 +50,6 @@ func (s *Server) Register(grpcServer *grpc.Server) {
 	pbresource.RegisterResourceServiceServer(grpcServer, s)
 }
 
-func (s *Server) WriteStatus(ctx context.Context, req *pbresource.WriteStatusRequest) (*pbresource.WriteStatusResponse, error) {
-	// TODO
-	return &pbresource.WriteStatusResponse{}, nil
-}
-
 func (s *Server) Delete(ctx context.Context, req *pbresource.DeleteRequest) (*pbresource.DeleteResponse, error) {
 	// TODO
 	return &pbresource.DeleteResponse{}, nil

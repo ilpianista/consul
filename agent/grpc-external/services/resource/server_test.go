@@ -20,14 +20,6 @@ import (
 	"github.com/hashicorp/consul/sdk/testutil"
 )
 
-func TestWriteStatus_TODO(t *testing.T) {
-	server := testServer(t)
-	client := testClient(t, server)
-	resp, err := client.WriteStatus(context.Background(), &pbresource.WriteStatusRequest{})
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-}
-
 func TestDelete_TODO(t *testing.T) {
 	server := testServer(t)
 	client := testClient(t, server)
