@@ -50,7 +50,7 @@ jobs:
           # multiplied by 8 based on these values:
           # envoy-version: ["1.22.7", "1.23.4", "1.24.2", "1.25.1"]
           # xds-target: ["server", "client"]
-          TOTAL_RUNNERS: 4 
+          TOTAL_RUNNERS: 2 
         run: ./.github/scripts/set_envoy_job_package_matrix.sh ${{env.TOTAL_RUNNERS}}
 
   dev-build:
