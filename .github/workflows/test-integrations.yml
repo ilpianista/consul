@@ -50,8 +50,17 @@ jobs:
           # multiplied by 8 based on these values:
           # envoy-version: ["1.22.7", "1.23.4", "1.24.2", "1.25.1"]
           # xds-target: ["server", "client"]
-          TOTAL_RUNNERS: 1 
-        run: ./.github/scripts/set_envoy_job_package_matrix.sh ${{env.TOTAL_RUNNERS}}
+          TOTAL_RUNNERS: 3 
+          JQ_SLICER: '[ inputs ] | [_nwise(length / $runnercount | floor)]'
+        run: |
+          {
+            echo -n "envoy-matrix="
+            find ./test/integration/connect/envoy -maxdepth 1 -type d -print0 \
+              | xargs -0 -n 1 basename \
+              | jq --raw-input --argjson runnercount "$TOTAL_RUNNERS" "$JQ_SLICER" \
+              | jq --compact-output 'map(join("|"))'
+          } >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
 
   dev-build:
     needs: [setup]
@@ -207,11 +216,11 @@ jobs:
           TERM: ansi
         run: |
           # shellcheck disable=SC2001
-          # echo "Running $(sed 's,|, ,g' <<< "${{ matrix.test-cases }}" |wc -w) subtests"
+          echo "Running $(sed 's,|, ,g' <<< "${{ matrix.test-cases }}" |wc -w) subtests"
           # shellcheck disable=SC2001
-          # sed 's,|,\n,g' <<< "${{ matrix.test-cases }}"
+          sed 's,|,\n,g' <<< "${{ matrix.test-cases }}"
           gotestsum -- -timeout=60m -tags integration ./test/integration/connect/envoy "-run=TestEnvoy/(${{ matrix.test-cases }})"
-
+          
       - uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce # v3.1.2
         with:
           name: container-logs
